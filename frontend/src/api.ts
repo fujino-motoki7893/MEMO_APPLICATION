@@ -6,7 +6,8 @@ export interface Memo {
   updatedAt: string;
 }
 
-const BASE = "/api/memos";
+const API_URL = import.meta.env.VITE_API_URL || "";
+const BASE = `${API_URL}/api/memos`;
 
 export async function fetchMemos(): Promise<Memo[]> {
   const res = await fetch(BASE);
