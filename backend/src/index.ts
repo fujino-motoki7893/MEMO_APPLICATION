@@ -1,9 +1,10 @@
 import express from "express";
 import cors from "cors";
-import { PrismaClient } from "@prisma/client";
+import prisma from "./prisma";
+import authRouter from "./routes/auth";
+import { authMiddleware, AuthRequest } from "./middleware/auth";
 
 const app = express();
-const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors({
@@ -11,67 +12,105 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Health check
+// Health check (no auth)
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-// Get all memos
-app.get("/api/memos", async (_req, res) => {
-  const memos = await prisma.memo.findMany({
-    orderBy: { updatedAt: "desc" },
-  });
-  res.json(memos);
+// Auth routes (no auth)
+app.use("/api/auth", authRouter);
+
+// All memo routes require authentication
+app.use("/api/memos", authMiddleware);
+
+// Get all memos (for current user)
+app.get("/api/memos", async (req: AuthRequest, res) => {
+  try {
+    const memos = await prisma.memo.findMany({
+      where: { userId: req.userId },
+      orderBy: { updatedAt: "desc" },
+    });
+    res.json(memos);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
-// Get a single memo
-app.get("/api/memos/:id", async (req, res) => {
-  const memo = await prisma.memo.findUnique({
-    where: { id: Number(req.params.id) },
-  });
-  if (!memo) {
-    res.status(404).json({ error: "Memo not found" });
-    return;
+// Get a single memo (owned by current user)
+app.get("/api/memos/:id", async (req: AuthRequest, res) => {
+  try {
+    const memo = await prisma.memo.findFirst({
+      where: { id: Number(req.params.id), userId: req.userId },
+    });
+    if (!memo) {
+      res.status(404).json({ error: "Memo not found" });
+      return;
+    }
+    res.json(memo);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
   }
-  res.json(memo);
 });
 
 // Create a memo
-app.post("/api/memos", async (req, res) => {
-  const { title, content } = req.body;
-  if (!title || content === undefined) {
-    res.status(400).json({ error: "title and content are required" });
-    return;
+app.post("/api/memos", async (req: AuthRequest, res) => {
+  try {
+    const { title, content } = req.body;
+    if (!title || content === undefined) {
+      res.status(400).json({ error: "title and content are required" });
+      return;
+    }
+    const memo = await prisma.memo.create({
+      data: { title, content, userId: req.userId! },
+    });
+    res.status(201).json(memo);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
   }
-  const memo = await prisma.memo.create({
-    data: { title, content },
-  });
-  res.status(201).json(memo);
 });
 
-// Update a memo
-app.put("/api/memos/:id", async (req, res) => {
-  const { title, content } = req.body;
+// Update a memo (owned by current user)
+app.put("/api/memos/:id", async (req: AuthRequest, res) => {
   try {
+    const { title, content } = req.body;
+    const existing = await prisma.memo.findFirst({
+      where: { id: Number(req.params.id), userId: req.userId },
+    });
+    if (!existing) {
+      res.status(404).json({ error: "Memo not found" });
+      return;
+    }
     const memo = await prisma.memo.update({
-      where: { id: Number(req.params.id) },
+      where: { id: existing.id },
       data: { title, content },
     });
     res.json(memo);
-  } catch {
-    res.status(404).json({ error: "Memo not found" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Delete a memo
-app.delete("/api/memos/:id", async (req, res) => {
+// Delete a memo (owned by current user)
+app.delete("/api/memos/:id", async (req: AuthRequest, res) => {
   try {
+    const existing = await prisma.memo.findFirst({
+      where: { id: Number(req.params.id), userId: req.userId },
+    });
+    if (!existing) {
+      res.status(404).json({ error: "Memo not found" });
+      return;
+    }
     await prisma.memo.delete({
-      where: { id: Number(req.params.id) },
+      where: { id: existing.id },
     });
     res.status(204).send();
-  } catch {
-    res.status(404).json({ error: "Memo not found" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

@@ -1,10 +1,17 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   type Memo,
+  type AuthUser,
+  UnauthorizedError,
   fetchMemos,
   createMemo,
   updateMemo,
   deleteMemo,
+  login,
+  register,
+  saveAuth,
+  loadUser,
+  clearAuth,
 } from "./api";
 
 function formatDate(dateStr: string): string {
@@ -18,6 +25,13 @@ function formatDate(dateStr: string): string {
 }
 
 export default function App() {
+  const [user, setUser] = useState<AuthUser | null>(loadUser);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+
   const [memos, setMemos] = useState<Memo[]>([]);
   const [selected, setSelected] = useState<Memo | null>(null);
   const [editing, setEditing] = useState(false);
@@ -34,21 +48,29 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!user) {
+      setBooting(false);
+      return;
+    }
+
     let cancelled = false;
 
     async function init() {
-      // Start elapsed timer
       const start = Date.now();
       timerRef.current = setInterval(() => {
         setElapsed(Math.floor((Date.now() - start) / 1000));
       }, 1000);
 
-      // Retry until backend responds
       while (!cancelled) {
         try {
           await loadMemos();
           break;
-        } catch {
+        } catch (err) {
+          if (err instanceof UnauthorizedError) {
+            clearAuth();
+            setUser(null);
+            break;
+          }
           await new Promise((r) => setTimeout(r, 2000));
         }
       }
@@ -64,7 +86,34 @@ export default function App() {
       cancelled = true;
       clearInterval(timerRef.current);
     };
-  }, [loadMemos]);
+  }, [user, loadMemos]);
+
+  async function handleAuth(e: React.FormEvent) {
+    e.preventDefault();
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      const authFn = authMode === "login" ? login : register;
+      const result = await authFn(authEmail, authPassword);
+      saveAuth(result);
+      setUser(result.user);
+      setAuthEmail("");
+      setAuthPassword("");
+      setBooting(true);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "エラーが発生しました");
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  function handleLogout() {
+    clearAuth();
+    setUser(null);
+    setMemos([]);
+    setEditing(false);
+    setSelected(null);
+  }
 
   function handleNew() {
     setSelected(null);
@@ -112,6 +161,85 @@ export default function App() {
     setSelected(null);
   }
 
+  // Auth screen
+  if (!user) {
+    return (
+      <div className="app">
+        <div className="auth-container">
+          <div className="auth-card">
+            <div className="auth-header">
+              <span className="header-icon">📝</span>
+              <h1>Memo App</h1>
+            </div>
+            <h2 className="auth-title">
+              {authMode === "login" ? "ログイン" : "アカウント登録"}
+            </h2>
+            <form onSubmit={handleAuth}>
+              {authError && <div className="error-message">{authError}</div>}
+              <input
+                type="email"
+                placeholder="メールアドレス"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                required
+                autoFocus
+              />
+              <input
+                type="password"
+                placeholder="パスワード（6文字以上）"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                required
+                minLength={6}
+              />
+              <button
+                className="btn btn-primary auth-submit"
+                type="submit"
+                disabled={authLoading}
+              >
+                {authLoading
+                  ? "処理中..."
+                  : authMode === "login"
+                  ? "ログイン"
+                  : "登録"}
+              </button>
+            </form>
+            <p className="auth-switch">
+              {authMode === "login" ? (
+                <>
+                  アカウントをお持ちでないですか？{" "}
+                  <span
+                    className="auth-switch-link"
+                    onClick={() => {
+                      setAuthMode("register");
+                      setAuthError("");
+                    }}
+                  >
+                    新規登録
+                  </span>
+                </>
+              ) : (
+                <>
+                  既にアカウントをお持ちですか？{" "}
+                  <span
+                    className="auth-switch-link"
+                    onClick={() => {
+                      setAuthMode("login");
+                      setAuthError("");
+                    }}
+                  >
+                    ログイン
+                  </span>
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Boot screen
   if (booting) {
     return (
       <div className="app">
@@ -130,6 +258,7 @@ export default function App() {
     );
   }
 
+  // Editor screen
   if (editing) {
     return (
       <div className="app">
@@ -143,6 +272,12 @@ export default function App() {
               {selected ? "編集" : "新規作成"}
             </span>
           </h1>
+          <div className="user-info">
+            <span className="user-email">{user.email}</span>
+            <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
+              ログアウト
+            </button>
+          </div>
         </header>
         <div className="editor">
           {error && <div className="error-message">{error}</div>}
@@ -176,15 +311,24 @@ export default function App() {
     );
   }
 
+  // Memo list screen
   return (
     <div className="app">
       <header>
         <h1>
           <span className="header-icon">📝</span>Memo App
         </h1>
-        <button className="btn btn-primary" onClick={handleNew}>
-          ＋ 新規メモ
-        </button>
+        <div className="header-right">
+          <button className="btn btn-primary" onClick={handleNew}>
+            ＋ 新規メモ
+          </button>
+          <div className="user-info">
+            <span className="user-email">{user.email}</span>
+            <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
+              ログアウト
+            </button>
+          </div>
+        </div>
       </header>
       {memos.length === 0 ? (
         <div className="empty-state">
