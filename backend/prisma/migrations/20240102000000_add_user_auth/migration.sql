@@ -19,7 +19,7 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM "memos" LIMIT 1) THEN
         INSERT INTO "users" ("email", "password", "created_at")
-        VALUES ('legacy@example.com', '$2b$10$placeholder_not_a_real_login', CURRENT_TIMESTAMP);
+        VALUES ('legacy@example.com', '$2b$10$1uD.N6DY28PQ.8Gnx5Tyg.NsPUUiUE1wZGvm7pAOWDWfnCfxRhtBO', CURRENT_TIMESTAMP);
 
         UPDATE "memos" SET "user_id" = (SELECT "id" FROM "users" WHERE "email" = 'legacy@example.com');
     END IF;
