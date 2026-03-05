@@ -3,6 +3,7 @@ import cors from "cors";
 import prisma from "./prisma";
 import authRouter from "./routes/auth";
 import { authMiddleware, AuthRequest } from "./middleware/auth";
+import { setupSwagger } from "./swagger";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -11,6 +12,9 @@ app.use(cors({
   origin: process.env.CORS_ORIGIN || "*",
 }));
 app.use(express.json());
+
+// Swagger UI
+setupSwagger(app);
 
 // Health check (no auth)
 app.get("/api/health", (_req, res) => {
